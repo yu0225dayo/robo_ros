@@ -3,11 +3,11 @@
 ==============================
 
 【ステップ1】 SAM-6D Docker イメージのビルド (初回のみ)
-  cd ~/ws/project/server
+  cd ~/ws/robo_ros/server
   docker compose build sam6d
 
 【ステップ2】 SAM-6D Docker サービスを起動
-  cd ~/ws/project/server
+  cd ~/ws/robo_ros/server
   docker compose up -d sam6d
 
   # ログ確認 (モデルロードに数分かかる)
@@ -18,15 +18,11 @@
 
 【ステップ3】 把持統合サーバ (server_grasp.py) を起動  ★現在の推奨
   conda activate sam3d-objects
-  cd /ws/okada/SAM3D_6DoF/server
+  cd ~/ws/robo_ros/server
   python server_grasp.py \
-    --grasp-model-dir ../client/save_model \
-    --grasp-client-dir ../client \
-    --sam-checkpoint  /ws/okada/project/sam2_checkpoints/sam2.1_hiera_large.pt \
-    --sam3d-config    /ws/okada/SAM3D_6DoF/server/sam-3d-objects/checkpoints/hf/pipeline.yaml \
-    --sam3d-repo      /ws/okada/SAM3D_6DoF/server/sam-3d-objects \
-    --sam6d-service   http://localhost:8081 \
-    --host 0.0.0.0 --port 8082
+    --sam6d-service http://localhost:8081 \
+    --host 0.0.0.0 \
+    --port 8082
 
   # ヘルスチェック
   curl http://localhost:8082/health
@@ -35,16 +31,10 @@
      メッシュ生成・姿勢推定・把持姿勢生成をこのサーバ1本で処理する (port 8082)。
      server.py (port 8080) は不要。
 
----------- (参考) server.py 単体起動 ----------
-【ステップ3 旧】 メインサーバ (server.py) を起動
-  conda activate sam3d-objects
-  python /ws/okada/SAM3D_6DoF/server/server.py \
-    --sam-checkpoint /ws/okada/project/sam2_checkpoints/sam2.1_hiera_large.pt \
-    --sam3d-config   /ws/okada/SAM3D_6DoF/server/sam-3d-objects/checkpoints/hf/pipeline.yaml \
-    --sam3d-repo     /ws/okada/SAM3D_6DoF/server/sam-3d-objects \
-    --sam6d-service  http://localhost:8081 \
-    --host 0.0.0.0 --port 8080
-------------------------------------------------
+  ※ デフォルトで以下を使用 (すべて ~/ws/robo_ros/server/ 内で解決):
+     client/save_model        … server/client/save_model (symlink → ../client)
+     sam2_checkpoints/        … server/sam2_checkpoints/
+     sam-3d-objects/          … server/sam-3d-objects/
 
 ==============================
  クライアント側 (sciurus17 PC) の起動

@@ -633,6 +633,7 @@ class SciurusGUI:
         # ── 2. カメラ ──
         f2 = section("2. カメラ")
         add_btn(f2, "▶  カメラ接続",    self._on_connect_camera, "cam_connect")
+        add_btn(f2, "↓  首を動かす",    self._on_head_move,      "head_move2")
         add_btn(f2, "フレーム取得",      self._on_capture,        "capture")
 
         # ── 3. 頭部制御 ──
@@ -833,6 +834,7 @@ class SciurusGUI:
             "cam_connect": s == S_IDLE,
             "capture":     s == S_CAMERA and not w,
             "head_move":   can_arm,
+            "head_move2":  can_arm,
             "head_home":   can_arm,
             "estimate":    s == S_SELECTED and not w,
             "grasp":       s == S_GRASP_READY and not w,

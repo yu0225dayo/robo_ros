@@ -1,6 +1,0 @@
-[submodule "server/SAM-6D"]
-	path = server/SAM-6D
-	url = git@github.com:yu0225dayo/SAM-6D.git
-[submodule "server/sam-3d-objects"]
-	path = server/sam-3d-objects
-	url = https://github.com/facebookresearch/sam-3d-objects

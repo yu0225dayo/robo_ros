@@ -16,9 +16,9 @@ WORKDIR /service
 COPY sam6d_service.py /service/sam6d_service.py
 
 # ボリュームマウント前提:
-#   /workspace/SAM-6D          → ホストの ~/ws/SAM-6D
-#   /workspace/sam6d_wrapper.py → ホストの ~/ws/sam6d_wrapper.py
-#   /workspace/tmp              → 共有テンポラリ
+#   /workspace/SAM-6D          → robo_ros/server/SAM-6D
+#   /workspace/sam6d_wrapper.py → robo_ros/server/sam6d_wrapper.py
+#   /workspace/tmp              → robo_ros/server/tmp
 
 EXPOSE 8081
 

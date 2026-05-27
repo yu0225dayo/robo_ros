@@ -26,6 +26,16 @@ from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import JSONResponse
 import uvicorn
 
+_SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _rel(path: str) -> str:
+    """絶対パスをサーバディレクトリからの相対パスに変換する"""
+    try:
+        return os.path.relpath(path, _SERVER_DIR)
+    except ValueError:
+        return path
+
 
 app = FastAPI(title="SAM 3D + SAM-6D Pipeline Server")
 
@@ -43,7 +53,7 @@ _sam3d_device: str = "cuda"
 _sam6d_url: str = "http://localhost:8081"
 
 # ホスト↔Dockerコンテナ間の共有tmpディレクトリパスマッピング
-_host_tmp: str   = "/home/okada/ws/project/tmp"
+_host_tmp: str   = os.path.join(_SERVER_DIR, "tmp")
 _docker_tmp: str = "/workspace/tmp"
 
 
@@ -171,7 +181,7 @@ async def reconstruct(
         cv2.imwrite(os.path.join(output_dir, f"mask_sam2_{_i+1}.png"), _m)
     mask_sam2_path = os.path.join(output_dir, "mask_sam2.png")
     cv2.imwrite(mask_sam2_path, (best_mask.astype(np.uint8) * 255))
-    print(f"[Server] SAM2 マスク保存: {output_dir}/mask_sam2_{{1,2,3}}.png")
+    print(f"[Server] SAM2 マスク保存: {_rel(output_dir)}/mask_sam2_{{1,2,3}}.png")
 
     # Step 2: SAM-3D でモデル生成 (推論後に即削除)
     output = _load_sam3d_and_run(rgb, best_mask, seed)
@@ -180,7 +190,7 @@ async def reconstruct(
     os.makedirs(output_dir, exist_ok=True)
     ply_path = os.path.join(output_dir, f"object_seed{seed}.ply")
     output["gs"].save_ply(ply_path)
-    print(f"[Server] PLY保存: {ply_path}")
+    print(f"[Server] PLY保存: {_rel(ply_path)}")
 
     # Gaussian splat PLY から XYZ 座標を抽出
     from plyfile import PlyData
@@ -288,7 +298,7 @@ async def reconstruct_mesh(
         cv2.imwrite(os.path.join(save_dir, f"mask_sam2_{_i+1}.png"), _m)
     mask_sam2_path = os.path.join(save_dir, "mask_sam2.png")
     cv2.imwrite(mask_sam2_path, (best_mask.astype(np.uint8) * 255))
-    print(f"[Server] SAM2 マスク保存: {save_dir}/mask_sam2_{{1,2,3}}.png")
+    print(f"[Server] SAM2 マスク保存: {_rel(save_dir)}/mask_sam2_{{1,2,3}}.png")
 
     # SAM-3D をロード → 推論 → 即削除してGPUを解放
     output = _load_sam3d_and_run(rgb, best_mask, seed)
@@ -301,7 +311,7 @@ async def reconstruct_mesh(
     # GS点群をPLYに保存
     import open3d as o3d
     output["gs"].save_ply(ply_path)
-    print(f"[Server] GS PLY 保存: {ply_path}")
+    print(f"[Server] GS PLY 保存: {_rel(ply_path)}")
 
     # 点群 → メッシュ変換
     print("[Server] 点群をメッシュに変換中 (BPA)...")
@@ -328,14 +338,14 @@ async def reconstruct_mesh(
     # 全点群を保存
     pcd_full_path = ply_path.replace(".ply", "_pcd_full.ply")
     o3d.io.write_point_cloud(pcd_full_path, gs_ply)
-    print(f"[Server] 全点群保存: {pcd_full_path}")
+    print(f"[Server] 全点群保存: {_rel(pcd_full_path)}")
 
     # 10000点にダウンサンプリング
     if n_pts > 10000:
         gs_ply = gs_ply.random_down_sample(10000 / n_pts)
     pcd_path = ply_path.replace(".ply", "_pcd.ply")
     o3d.io.write_point_cloud(pcd_path, gs_ply)
-    print(f"[Server] ダウンサンプル後: {len(gs_ply.points)} points → {pcd_path}")
+    print(f"[Server] ダウンサンプル後: {len(gs_ply.points)} points → {_rel(pcd_path)}")
 
     gs_ply.estimate_normals()
     gs_ply.orient_normals_consistent_tangent_plane(k=15)
@@ -422,7 +432,7 @@ async def reconstruct_mesh(
     mesh_path = ply_path.replace(".ply", "_mesh.ply")
     o3d.io.write_triangle_mesh(mesh_path, mesh_o3d)
     t_mesh = time.time()
-    print(f"[Server] メッシュ保存: {mesh_path} ({len(mesh_o3d.triangles)} triangles) [合計: {t_mesh - t0:.1f}s]")
+    print(f"[Server] メッシュ保存: {_rel(mesh_path)} ({len(mesh_o3d.triangles)} triangles) [合計: {t_mesh - t0:.1f}s]")
 
     ys, xs = np.where(best_mask)
     mask_center_u = int(xs.mean())
@@ -533,6 +543,15 @@ async def pose_estimate(
     output_dir_host = output_dir_docker.replace(_docker_tmp, _host_tmp)
     sam6d_results_dir = os.path.join(output_dir_host, "sam6d_results")
     os.makedirs(sam6d_results_dir, exist_ok=True)
+
+    # テンプレート存在チェック
+    templates_host = os.path.join(output_dir_host, "templates")
+    if not os.path.isdir(templates_host):
+        raise HTTPException(
+            500,
+            f"テンプレートが見つかりません: {_rel(templates_host)}\n"
+            "/reconstruct_mesh を再実行してください。"
+        )
     try:
         os.chmod(sam6d_results_dir, 0o777)
     except Exception:
@@ -562,7 +581,7 @@ async def pose_estimate(
     detection_ism_path = os.path.join(sam6d_results_dir, "detection_ism.json")
     with open(detection_ism_path, "w") as f:
         json.dump(detection_ism, f)
-    print(f"[pose_estimate] detection_ism.json 保存 (SAM2): {detection_ism_path}")
+    print(f"[pose_estimate] detection_ism.json 保存 (SAM2): {_rel(detection_ism_path)}")
 
     # vis_mask.png 生成 (マスクオーバーレイ + クリック点 + bbox)
     vis = rgb_np.copy()
@@ -571,7 +590,7 @@ async def pose_estimate(
     cv2.circle(vis, (px, py), 6, (255, 0, 0), -1)
     cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 0, 255), 2)
     cv2.imwrite(os.path.join(sam6d_results_dir, "vis_mask.png"), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
-    print(f"[pose_estimate] vis_mask.png 保存: {sam6d_results_dir}")
+    print(f"[pose_estimate] vis_mask.png 保存: {_rel(sam6d_results_dir)}")
 
     # Docker パス
     rgb_docker   = f"{_docker_tmp}/rgb.png"
@@ -580,19 +599,64 @@ async def pose_estimate(
 
     # RGBDから実スケール推定 → メッシュをスケーリング (model_points/radius に影響)
     # テンプレートxyzはNOCS形式のためスケーリング不要
-    _ys, _xs = np.where(best_sam2_mask.astype(bool))
-    _Z = depth_f32[_ys, _xs]
+    # マスク境界ノイズを除くため内側のみ使用（エロージョン半径=マスクサイズに比例）
+    _mask_u8 = best_sam2_mask.astype(np.uint8)
+    _mask_area = int(_mask_u8.sum())
+    _kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))  # 縁2px除外
+    _mask_inner = cv2.erode(_mask_u8, _kernel)
+    _ys_i, _xs_i = np.where(_mask_inner.astype(bool))
+    if len(_ys_i) < 10:  # エロージョンしすぎた場合はフルマスクにフォールバック
+        _mask_inner = _mask_u8
+        _ys_i, _xs_i = np.where(_mask_inner.astype(bool))
+    print(f"[pose_estimate] マスク内側: 全{_mask_area}px → 内側{len(_ys_i)}px (erode=2px)")
+    _Z = depth_f32[_ys_i, _xs_i]
     _valid = _Z > 0
     estimated_size_mm = None
     if _valid.sum() > 10:
+        _ys_v = _ys_i[_valid]
+        _xs_v = _xs_i[_valid]
         _Zv = _Z[_valid]
-        _Xv = (_xs[_valid] - cx) * _Zv / fx
-        _Yv = (_ys[_valid] - cy) * _Zv / fy
-        _pts = np.stack([_Xv, _Yv, _Zv], axis=1)
-        _extent = _pts.max(axis=0) - _pts.min(axis=0)
-        estimated_size_mm = float(_extent.max()) * 1000.0
-        print(f"[pose_estimate] 推定物体サイズ: {estimated_size_mm:.1f}mm "
-              f"(X:{_extent[0]*1000:.1f} Y:{_extent[1]*1000:.1f} Z:{_extent[2]*1000:.1f} mm)")
+        _Xv = (_xs_v - cx) * _Zv / fx
+        _Yv = (_ys_v - cy) * _Zv / fy
+
+        # 深度 Z の外れ値除去（中央値±2σ）
+        _Z_med = float(np.median(_Zv))
+        _Z_std = float(_Zv.std())
+        _inlier = np.abs(_Zv - _Z_med) < 2.0 * _Z_std
+        if _inlier.sum() >= 10:
+            _ys_v, _xs_v = _ys_v[_inlier], _xs_v[_inlier]
+            _Zv, _Xv, _Yv = _Zv[_inlier], _Xv[_inlier], _Yv[_inlier]
+        print(f"[pose_estimate] 深度外れ値除去: {_valid.sum()}px → {len(_Zv)}px "
+              f"(Z_med={_Z_med*1000:.0f}mm ±{_Z_std*1000:.0f}mm×2)")
+
+        # 高さ（Y方向）はパーセンタイルで推定（端点の外れ値に頑健）
+        _Y_lo = float(np.percentile(_Yv, 2))
+        _Y_hi = float(np.percentile(_Yv, 98))
+        estimated_size_mm = (_Y_hi - _Y_lo) * 1000.0
+        print(f"[pose_estimate] 推定物体サイズ: {estimated_size_mm:.1f}mm (高さY, pct2-98) "
+              f"Y:[{_Y_lo*1000:.0f}, {_Y_hi*1000:.0f}]mm")
+
+        # 高さ推定に用いた最高・最低点を可視化して保存
+        _idx_top = int(np.argmin(np.abs(_Yv - _Y_lo)))  # 2パーセンタイルに最も近い点
+        _idx_bot = int(np.argmin(np.abs(_Yv - _Y_hi)))  # 98パーセンタイルに最も近い点
+        _pt_top = (int(_xs_v[_idx_top]), int(_ys_v[_idx_top]))
+        _pt_bot = (int(_xs_v[_idx_bot]), int(_ys_v[_idx_bot]))
+        vis_h = rgb_np.copy()
+        _inner_bool = _mask_inner.astype(bool)
+        vis_h[_inner_bool] = (vis_h[_inner_bool] * 0.6 + np.array([80, 180, 255]) * 0.4).astype(np.uint8)
+        cv2.circle(vis_h, _pt_top, 10, (0, 255, 0), -1)
+        cv2.putText(vis_h, f"top {_Yv[_idx_top]*1000:.0f}mm",
+                    (_pt_top[0] + 8, _pt_top[1] + 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+        cv2.circle(vis_h, _pt_bot, 10, (0, 50, 255), -1)
+        cv2.putText(vis_h, f"bot {_Yv[_idx_bot]*1000:.0f}mm",
+                    (_pt_bot[0] + 8, _pt_bot[1] + 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 50, 255), 2)
+        cv2.putText(vis_h, f"height={estimated_size_mm:.1f}mm  pct2-98  erode=2px",
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 220, 0), 2)
+        cv2.imwrite(os.path.join(sam6d_results_dir, "vis_height.png"),
+                    cv2.cvtColor(vis_h, cv2.COLOR_RGB2BGR))
+        print(f"[pose_estimate] vis_height.png 保存")
 
     # object_size_mm が指定されている場合は深度推定より優先
     if object_size_mm > 0:
@@ -603,7 +667,7 @@ async def pose_estimate(
     if estimated_size_mm is not None:
         import trimesh as _trimesh
         import glob as _glob
-        # メッシュのZ軸長を取得してscale_factorを計算 (入力値=高さ=Z軸長)
+        # メッシュのZ軸長を取得してscale_factorを計算 (メッシュZ=物体高さ)
         _m = _trimesh.load_mesh(mesh_host_path)
         _z_extent = _m.bounding_box.extents[2]  # Z軸方向の長さ [mm]
         if _z_extent > 0:
@@ -626,7 +690,7 @@ async def pose_estimate(
                 pass
             np.save(_out, _xyz * scale_factor)
         output_dir_docker_for_pem = output_dir_docker
-        print(f"[pose_estimate] Z軸スケール: {_z_extent:.1f}mm → {estimated_size_mm:.1f}mm (factor={scale_factor:.3f})")
+        print(f"[pose_estimate] スケール (カメラY→メッシュZ): {_z_extent:.1f}mm → {estimated_size_mm:.1f}mm (factor={scale_factor:.3f})")
     else:
         mesh_path_for_pem = mesh_host_path.replace(_host_tmp, _docker_tmp)
         output_dir_docker_for_pem = output_dir_docker
@@ -650,6 +714,12 @@ async def pose_estimate(
 
     # 結果 JSON 読み込み
     result_json_path = os.path.join(sam6d_results_dir, "detection_pem.json")
+    if not os.path.exists(result_json_path):
+        raise HTTPException(
+            500,
+            f"pose 推定結果が見つかりません: {_rel(result_json_path)}\n"
+            f"stdout: {proc.stdout[-1000:]}\nstderr: {proc.stderr[-1000:]}"
+        )
     with open(result_json_path, "r") as f:
         detections = json.load(f)
 
@@ -669,6 +739,10 @@ async def pose_estimate(
         """pts_mm: (3,N) mm座標 → (N,2) 画像座標"""
         cam = R @ pts_mm + t_mm[:, np.newaxis]
         p = K @ cam
+        if np.any(p[2] == 0) or np.any(~np.isfinite(p)):
+            import os
+            print(f"[_proj] 無効な深度値を検出 (Z=0/NaN/Inf)。プロセスを終了します。")
+            os._exit(1)
         return (p[:2] / p[2]).T.astype(np.int32)
 
     def _draw_bbox(img, pts8x2, color, size=2):
@@ -684,11 +758,13 @@ async def pose_estimate(
         return img
 
     def _draw_axes(img, R, t_mm, K, length_mm):
-        """座標軸を赤(X)緑(Y)青(Z)の矢印で描画"""
+        """座標軸を赤(X)緑(Y)青(Z)の矢印で描画。Z(青)軸が画像下向きなら表示のみ上向きに反転。"""
         origin = _proj(t_mm[:, np.newaxis], np.eye(3), np.zeros(3), K)[0]
         for i, c in enumerate([(0,0,255),(0,255,0),(255,0,0)]):  # BGR: x=赤,y=緑,z=青
             end_mm = t_mm + R[:, i] * length_mm
             ep = _proj(end_mm[:, np.newaxis], np.eye(3), np.zeros(3), K)[0]
+            if i == 2 and ep[1] > origin[1]:  # Z(青)軸が画像下向き → 表示のみ反転
+                ep = np.array([ep[0], 2 * origin[1] - ep[1]], dtype=np.int32)
             cv2.arrowedLine(img, tuple(origin), tuple(ep), c, 2, tipLength=0.3)
         return img
 
@@ -718,12 +794,22 @@ async def pose_estimate(
         return concat
 
     R_np = np.array(R_list, dtype=np.float32)
+    # Z軸を下向き(R[1,2]>0)に統一 — server_grasp.py の R_corr=diag(1,1,-1) と整合
+    # 上向き(R[1,2]<0)のときだけ反転してDOWNに揃える
+    if R_np[1, 2] < 0:
+        R_np[:, 2] *= -1
+        print(f"[pose_estimate] Z軸反転 (UP→DOWN): R[1,2]={R_np[1,2]:.3f}")
+    else:
+        print(f"[pose_estimate] Z軸反転なし (すでにDOWN): R[1,2]={R_np[1,2]:.3f}")
+    R_list = R_np.tolist()
+
+    # 可視化用: R_npは常にZ下向き(R[1,2]>0) → 反転して↑向きで表示
+    R_vis = R_np.copy()
+    R_vis[:, 2] *= -1
+    print(f"[pose_estimate] 可視化用: Z軸を↑向きに反転 R_vis[1,2]={R_vis[1,2]:.3f}")
+
     t_mm_np = np.array(best["t"], dtype=np.float32)   # mm単位 (vis_pemと同じ)
     K_np = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
-    # PEM は Y 軸下向きで出力するため、可視化用に X 軸周り 180° 補正
-    _R_corr = np.diag([1.0, -1.0, -1.0]).astype(np.float32)
-    R_vis = R_np @ _R_corr
-
     mesh_host = mesh_path_for_pem.replace(_docker_tmp, _host_tmp)
     img1_b64 = ""
     try:
@@ -733,8 +819,7 @@ async def pose_estimate(
         else:
             pcd = o3d.io.read_point_cloud(mesh_host)
         pts_mm = np.asarray(pcd.points, dtype=np.float32)  # mm単位
-        pts_mm_vis = (pts_mm @ _R_corr.T)
-        concat1 = _make_vis(bgr, R_vis, t_mm_np, pts_mm_vis, K_np, pcd_color=(0,255,0), bbox_color=(0,255,255), with_axes=True)
+        concat1 = _make_vis(bgr, R_vis, t_mm_np, pts_mm, K_np, pcd_color=(0,255,0), bbox_color=(0,255,255), with_axes=True)
         _, buf1 = cv2.imencode(".png", concat1)
         img1_b64 = base64.b64encode(buf1).decode()
         print("[pose_estimate] 画像1 (vis_pemスタイル) 生成完了")
@@ -749,8 +834,7 @@ async def pose_estimate(
         else:
             pcd2 = o3d.io.read_point_cloud(mesh_host)
         pts_mm2 = np.asarray(pcd2.points, dtype=np.float32)
-        pts_mm2_vis = (pts_mm2 @ _R_corr.T)
-        concat2 = _make_vis(bgr, R_vis, t_mm_np, pts_mm2_vis, K_np, pcd_color=(0,255,0), bbox_color=(0,255,255), with_axes=False)
+        concat2 = _make_vis(bgr, R_vis, t_mm_np, pts_mm2, K_np, pcd_color=(0,255,0), bbox_color=(0,255,255), with_axes=False)
         _, buf2 = cv2.imencode(".png", concat2)
         img2_b64 = base64.b64encode(buf2).decode()
         print("[pose_estimate] 画像2 (高密度メッシュ) 生成完了")
@@ -823,8 +907,7 @@ async def estimate_pose(
     """
     import tempfile, shutil
 
-    tmpdir = tempfile.mkdtemp(dir=os.path.join(
-        os.path.dirname(args_global.sam3d_repo), "tmp"))
+    tmpdir = tempfile.mkdtemp(dir=_host_tmp)
     try:
         # アップロードファイルを一時保存
         rgb_path = os.path.join(tmpdir, "rgb.png")
@@ -945,7 +1028,7 @@ async def full_pipeline(
     os.makedirs(output_dir, exist_ok=True)
     ply_path = os.path.join(output_dir, f"object_seed{seed}.ply")
     recon_output["gs"].save_ply(ply_path)
-    print(f"[Pipeline] PLY 保存: {ply_path}")
+    print(f"[Pipeline] PLY 保存: {_rel(ply_path)}")
 
     from plyfile import PlyData
     ply_data = PlyData.read(ply_path)
@@ -1001,6 +1084,8 @@ async def full_pipeline(
             "cad_path": ply_path,
             "template_dir": template_dir,
             "det_score_thresh": det_score_thresh,
+            "click_x": mask_center_u,
+            "click_y": mask_center_v,
         }, timeout=300.0)
         print(f"[Pipeline] 姿勢推定完了")
     finally:
@@ -1055,22 +1140,28 @@ async def segment_only(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--sam-checkpoint", required=True,
-                        help="SAM ViT-H モデル重みパス")
-    parser.add_argument("--sam3d-config", required=True,
-                        help="sam-3d-objects の pipeline.yaml パス")
-    parser.add_argument("--sam3d-repo", required=True,
-                        help="sam-3d-objects リポジトリのパス")
-    parser.add_argument("--sam6d-service", default="http://localhost:8081",
-                        help="SAM-6D Docker サービスの URL (デフォルト: http://localhost:8081)")
+    parser.add_argument("--sam-checkpoint", default=None,
+                        help="SAM2 モデル重みパス (.pt) "
+                             "(省略時: {sam3d-repo}/../../sam2_checkpoints/sam2.1_hiera_large.pt)")
+    parser.add_argument("--sam3d-repo",
+                        default=os.path.join(_SERVER_DIR, "sam-3d-objects"),
+                        help="sam-3d-objects リポジトリのパス (省略時: server/sam-3d-objects)")
+    parser.add_argument("--sam3d-config", default=None,
+                        help="sam-3d-objects の pipeline.yaml パス (省略時: {sam3d-repo}/checkpoints/hf/pipeline.yaml)")
+    parser.add_argument("--sam6d-service", default="http://localhost:8081")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8080)
-    parser.add_argument("--host-tmp", default="/home/okada/ws/project/tmp",
-                        help="ホスト側の共有tmpディレクトリ (Dockerマウント元)")
-    parser.add_argument("--docker-tmp", default="/workspace/tmp",
-                        help="Dockerコンテナ内の共有tmpディレクトリ (マウント先)")
+    parser.add_argument("--host-tmp", default=os.path.join(_SERVER_DIR, "tmp"))
+    parser.add_argument("--docker-tmp", default="/workspace/tmp")
     args = parser.parse_args()
+
+    # 省略引数を sam3d-repo から自動導出
+    if args.sam3d_config is None:
+        args.sam3d_config = os.path.join(args.sam3d_repo, "checkpoints", "hf", "pipeline.yaml")
+    if args.sam_checkpoint is None:
+        args.sam_checkpoint = os.path.join(_SERVER_DIR, "sam2_checkpoints", "sam2.1_hiera_large.pt")
+
     args_global = args
     _sam6d_url  = args.sam6d_service
     _host_tmp   = args.host_tmp
@@ -1078,9 +1169,14 @@ if __name__ == "__main__":
 
     print("=" * 50)
     print(f"  SAM 3D + SAM-6D Pipeline Server")
-    print(f"  device:       {args.device}")
-    print(f"  host:port:    {args.host}:{args.port}")
+    print(f"  device:        {args.device}")
+    print(f"  host:port:     {args.host}:{args.port}")
     print(f"  sam6d_service: {_sam6d_url}")
+    print(f"  sam_checkpoint:{args.sam_checkpoint}")
+    print(f"  sam3d_repo:    {args.sam3d_repo}")
+    print(f"  sam3d_config:  {args.sam3d_config}")
+    print(f"  host_tmp:      {_host_tmp}")
+    print(f"  docker_tmp:    {_docker_tmp}")
     print("=" * 50)
 
     load_models(args.sam_checkpoint, args.sam3d_config, args.sam3d_repo, args.device)

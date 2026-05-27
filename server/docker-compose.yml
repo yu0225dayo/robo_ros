@@ -30,22 +30,25 @@ services:
       - CUDA_VISIBLE_DEVICES=0
     volumes:
       # SAM-6D リポジトリ (チェックポイントのダウンロード書き込みを許可)
-      - /home/okada/ws/project/server/SAM-6D:/workspace/SAM-6D
+      - /home/okada/ws/robo_ros/server/SAM-6D:/workspace/SAM-6D
       # sam6d_wrapper.py を共有 (同じワークスペースから参照)
-      - /home/okada/ws/project/server/sam6d_wrapper.py:/workspace/sam6d_wrapper.py
+      - /home/okada/ws/robo_ros/server/sam6d_wrapper.py:/workspace/sam6d_wrapper.py
       # sam6d_service.py をホスト側と共有 (コンテナ再ビルド不要で変更を反映)
-      - /home/okada/ws/project/server/sam6d_service.py:/service/sam6d_service.py
+      - /home/okada/ws/robo_ros/server/sam6d_service.py:/service/sam6d_service.py
       # 共有テンポラリ (中間ファイルを両サービスで共有)
-      - /home/okada/ws/project/tmp:/workspace/tmp
+      - /home/okada/ws/robo_ros/server/tmp:/workspace/tmp
     ports:
       - "127.0.0.1:8081:8081"   # ローカルのみ公開 (外部非公開)
     command: >
-      /opt/conda/envs/sam6d/bin/python /service/sam6d_service.py
-        --sam6d-repo /workspace/SAM-6D
-        --device cuda
-        --segmentor sam
-        --host 0.0.0.0
-        --port 8081
+      bash -c "
+        chmod -R a+rwX /workspace/tmp 2>/dev/null || true &&
+        /opt/conda/envs/sam6d/bin/python /service/sam6d_service.py
+          --sam6d-repo /workspace/SAM-6D
+          --device cuda
+          --segmentor sam
+          --host 0.0.0.0
+          --port 8081
+      "
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
       interval: 30s
@@ -63,9 +66,9 @@ services:
       - test   # docker compose run client-test で明示的に起動 (up -d では起動しない)
     volumes:
       # クライアントコード (test_demo.py, utils/, pipeline/ など)
-      - /home/okada/ws/project/client:/client
+      - /home/okada/ws/robo_ros/client:/client
       # テンプレート・メッシュなどの共有tmpディレクトリ
-      - /home/okada/ws/project/tmp:/workspace/tmp
+      - /home/okada/ws/robo_ros/server/tmp:/workspace/tmp
     working_dir: /client
     environment:
       - NVIDIA_VISIBLE_DEVICES=all

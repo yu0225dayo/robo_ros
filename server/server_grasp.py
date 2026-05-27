@@ -5,10 +5,16 @@ GraspGenerator (Shape2Gesture) を HTTP サービスとして提供する。
 SAM-6D サーバ (server.py) と独立して動作する。
 
 起動方法:
-    python server_grasp.py \
-        --grasp-model-dir /path/to/save_model \
-        --grasp-client-dir /path/to/client \
-        --host 0.0.0.0 --port 8082
+python server_grasp.py \
+  --sam6d-service http://localhost:8081 \
+  --host 0.0.0.0 \
+  --port 8082
+
+# デフォルト値はすべて server/ ディレクトリ内で解決される:
+#   client/save_model   … server/client -> ../client (symlink)
+#   sam2_checkpoints/   … server/sam2_checkpoints/ (コピー)
+#   sam-3d-objects/     … server/sam-3d-objects/ (既存)
+
 
 エンドポイント:
     GET  /health          — 死活確認
@@ -60,8 +66,12 @@ def _get_docker_workspace_host(container: str = "sam6d_service") -> str:
         )
         if r.returncode == 0:
             for m in json.loads(r.stdout.strip()):
-                if m.get("Destination") == "/workspace":
-                    return m["Source"]
+                dst = m.get("Destination", "")
+                src = m.get("Source", "")
+                if dst == "/workspace":
+                    return src
+                if dst == "/workspace/tmp" and src.endswith("/tmp"):
+                    return src[:-4]  # /workspace/tmp → strip /tmp → host workspace root
     except Exception:
         pass
     return ""
@@ -189,35 +199,39 @@ async def generate_grasp(
     if not os.path.exists(mesh_host):
         raise HTTPException(404, f"メッシュが見つかりません: {mesh_host}")
 
+    # pose_estimate が生成した Z軸スケール済みメッシュがあれば優先して使用
+    scaled_host = mesh_host.replace(".ply", "_scaled.ply")
+    load_path = scaled_host if os.path.exists(scaled_host) else mesh_host
+
     # PLY 点群読み込み (open3d があれば使用、なければ plyfile)
     try:
         import open3d as o3d
-        pcd = o3d.io.read_point_cloud(mesh_host)
+        pcd = o3d.io.read_point_cloud(load_path)
         mesh_pts = np.asarray(pcd.points, dtype=np.float32)
         if len(mesh_pts) == 0:
             raise ValueError("open3d で点群が空")
     except Exception:
         from plyfile import PlyData
-        ply_data = PlyData.read(mesh_host)
+        ply_data = PlyData.read(load_path)
         v = ply_data["vertex"]
         mesh_pts = np.stack([v["x"], v["y"], v["z"]], axis=-1).astype(np.float32)
 
     if len(mesh_pts) == 0:
         raise HTTPException(500, "点群が空です")
 
-    print(f"[GraspServer] PLY 読み込み: {len(mesh_pts)} pts ({_rel(mesh_host)})")
+    print(f"[GraspServer] PLY 読み込み: {len(mesh_pts)} pts ({_rel(load_path)})")
 
-    # 重力アライメント
-    gvec = np.array([gravity_x, gravity_y, gravity_z], dtype=np.float32)
-    gravity_cam = gvec if float(np.linalg.norm(gvec)) > 1e-6 else None
-    mesh_pts_aligned, R_corr = _align_from_gravity(mesh_pts, gravity_cam)
+    # 把持姿勢生成入力: Z軸反転 (server.pyのZ列反転と一致させる)
+    R_corr = np.diag([1.0, 1.0, -1.0]).astype(np.float64)
+    mesh_pts_aligned = (R_corr @ mesh_pts.T).T.astype(mesh_pts.dtype)
 
-    # メッシュスケール: mm 単位の点群 → 最大半径 [m]
-    centered = mesh_pts_aligned - mesh_pts_aligned.mean(axis=0)
-    mesh_scale_m = float(np.max(np.linalg.norm(centered, axis=1))) / 1000.0
+    # メッシュスケール: Z軸長（高さ）[m]
+    bbox_ext = mesh_pts_aligned.max(axis=0) - mesh_pts_aligned.min(axis=0)
+    mesh_scale_m = float(bbox_ext[2]) / 1000.0
 
     # 把持姿勢生成
-    print(f"[GraspServer] 生成中 (num_samples={num_samples}, scale={mesh_scale_m:.4f} m)...")
+    print(f"[GraspServer] 生成中 (num_samples={num_samples}, scale={mesh_scale_m:.4f} m, "
+          f"scaled={'yes' if load_path == scaled_host else 'no'})...")
     results = gen.generate(mesh_pts_aligned, num_samples=num_samples)
 
     grasps = [
@@ -330,20 +344,23 @@ async def estimate_and_generate_grasp(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--grasp-model-dir",
-                        default=os.path.join(os.path.dirname(_SERVER_DIR), "client", "save_model"),
+                        default=os.path.join(_SERVER_DIR, "client", "save_model"),
                         help="Shape2Gesture の save_model ディレクトリ")
     parser.add_argument("--grasp-client-dir",
-                        default=os.path.join(os.path.dirname(_SERVER_DIR), "client"),
+                        default=os.path.join(_SERVER_DIR, "client"),
                         help="client/ ディレクトリ (pipeline/models のインポート元)")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8082)
     parser.add_argument("--host-tmp", default=os.path.join(_SERVER_DIR, "tmp"))
     parser.add_argument("--docker-tmp", default="/workspace/tmp")
-    parser.add_argument("--sam-checkpoint", default="",
+    parser.add_argument("--sam-checkpoint",
+                        default=os.path.join(_SERVER_DIR, "sam2_checkpoints", "sam2.1_hiera_large.pt"),
                         help="SAM2 checkpoint. Required for /estimate_and_generate_grasp.")
-    parser.add_argument("--sam3d-config", default="",
+    parser.add_argument("--sam3d-config",
+                        default=os.path.join(_SERVER_DIR, "sam-3d-objects", "checkpoints", "hf", "pipeline.yaml"),
                         help="sam-3d-objects pipeline.yaml. Required for /estimate_and_generate_grasp.")
-    parser.add_argument("--sam3d-repo", default="",
+    parser.add_argument("--sam3d-repo",
+                        default=os.path.join(_SERVER_DIR, "sam-3d-objects"),
                         help="sam-3d-objects repo path. Required for /estimate_and_generate_grasp.")
     parser.add_argument("--sam6d-service", default="http://localhost:8081",
                         help="SAM-6D service URL used by the imported pipeline server.")

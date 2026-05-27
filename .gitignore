@@ -31,3 +31,9 @@ client/data/
 client/output/
 client/save_model/
 client/test_data/
+
+# 大規模外部リポジトリ・モデル（Git管理外、手動配置）
+server/SAM-6D/
+server/sam-3d-objects/
+server/sam2_checkpoints/
+server/client
