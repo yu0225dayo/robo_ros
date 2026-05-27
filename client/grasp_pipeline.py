@@ -237,9 +237,10 @@ def main():
     t      = pose_result["t"]
     points = pose_result["points"]   # (N, 3) 物体点群
 
-    # スケール計算 (点群の最大半径 [mm] → [m])
+    # スケール計算: normalize_pointcloud と同じ max(bbox辺)/2 [mm→m]
     centered     = points - points.mean(axis=0)
-    mesh_scale_m = float(np.max(np.linalg.norm(centered, axis=1))) / 1000.0
+    _bbox_ext    = centered.max(axis=0) - centered.min(axis=0)
+    mesh_scale_m = float(np.max(_bbox_ext)) / 1000.0
     pose = ObjectPose(center_3d=t, scale=mesh_scale_m, R=R)
     print(f"  mesh_scale_m = {mesh_scale_m:.4f} m")
 

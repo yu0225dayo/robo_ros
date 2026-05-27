@@ -175,7 +175,7 @@ def run_online(config: dict, args):
     # PLY は mm 単位。正規化半径 (mm) / 1000 → メートルスケール
     _centered = mesh_pts - mesh_pts.mean(axis=0)
     _bbox_ext = _centered.max(axis=0) - _centered.min(axis=0)
-    mesh_scale_m = float(np.max(_bbox_ext)) / 2.0 / 1000.0
+    mesh_scale_m = float(np.max(_bbox_ext)) / 1000.0
     print(f"[CoordTransform] mesh_scale_m={mesh_scale_m:.4f} m")
 
     # ロボット
@@ -457,7 +457,8 @@ def run_full(config: dict, args):
                 mesh_pts      = load_pointcloud_ply(mesh_path, target_points=2048)
                 mesh_pts_norm = normalize_pointcloud(mesh_pts)
                 _centered = mesh_pts - mesh_pts.mean(axis=0)
-                mesh_scale_m = float(np.max(np.linalg.norm(_centered, axis=1))) / 1000.0
+                _bbox_ext = _centered.max(axis=0) - _centered.min(axis=0)
+                mesh_scale_m = float(np.max(_bbox_ext)) / 1000.0
                 print(f"[mesh生成完了] {mesh_path}  scale={mesh_scale_m:.4f} m")
 
                 # ---- 3マスクを横並びで out_dir に保存・表示 ----
@@ -544,7 +545,8 @@ def run_full(config: dict, args):
                     mesh_pts      = load_pointcloud_ply(mesh_path, target_points=2048)
                     mesh_pts_norm = normalize_pointcloud(mesh_pts)
                     _centered = mesh_pts - mesh_pts.mean(axis=0)
-                    mesh_scale_m = float(np.max(np.linalg.norm(_centered, axis=1))) / 1000.0
+                    _bbox_ext = _centered.max(axis=0) - _centered.min(axis=0)
+                    mesh_scale_m = float(np.max(_bbox_ext)) / 2.0 / 1000.0
                     print(f"[mesh生成完了] {mesh_path}  scale={mesh_scale_m:.4f} m")
 
                     # 3D 点群を表示 (matplotlib, ダウンサンプリング)

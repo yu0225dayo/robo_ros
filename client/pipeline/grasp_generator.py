@@ -143,6 +143,8 @@ class GraspGenerator:
             # --- 手スケール予測 ---
             pts = pt_input.transpose(2, 1)
             hscale_l, hscale_r = self.scaleNet(pts)[0]
+            print(f"[GraspGenerator] hand scale (正規化空間 scale=1 に対する手サイズ): "
+                  f"left={hscale_l.item():.4f}, right={hscale_r.item():.4f}")
 
             # --- 部位特徴エンコード ---
             pf_l, mu_l, logvar_l = self.parts_encoder_l(pl, all_feat)

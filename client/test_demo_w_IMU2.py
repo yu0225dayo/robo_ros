@@ -477,7 +477,8 @@ def run_full(args, config):
 
     # main.py と同様にメッシュ幾何からスケールを計算（深度推定より安定）
     _centered = mesh_pts - mesh_pts.mean(axis=0)
-    mesh_scale_m = float(np.max(np.linalg.norm(_centered, axis=1))) / 1000.0
+    _bbox_ext = _centered.max(axis=0) - _centered.min(axis=0)
+    mesh_scale_m = float(np.max(_bbox_ext)) / 1000.0
     print(f"[CoordTransform] mesh_scale_m={mesh_scale_m:.4f} m")
     pose = ObjectPose(center_3d=t, scale=mesh_scale_m, R=R)
 
@@ -590,7 +591,8 @@ def run_online(args, config):
 
     # main.py と同様にメッシュ幾何からスケールを計算
     _centered = mesh_pts - mesh_pts.mean(axis=0)
-    mesh_scale_m = float(np.max(np.linalg.norm(_centered, axis=1))) / 1000.0
+    _bbox_ext = _centered.max(axis=0) - _centered.min(axis=0)
+    mesh_scale_m = float(np.max(_bbox_ext)) / 1000.0
     print(f"[CoordTransform] mesh_scale_m={mesh_scale_m:.4f} m")
     pose = ObjectPose(center_3d=t, scale=mesh_scale_m, R=R)
 
