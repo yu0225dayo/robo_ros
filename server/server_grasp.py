@@ -22,6 +22,8 @@ python server_grasp.py \
 """
 
 import argparse
+import csv
+from datetime import datetime
 import io
 import inspect
 import json
@@ -44,10 +46,36 @@ _grasp_client_dir: str = ""
 _grasp_generator = None
 _grasp_generator_lock = threading.Lock()
 _pipeline_server = None
+_csv_log_path: str = ""
+_csv_lock = threading.Lock()
 
 # /reconstruct_mesh が返す Docker パス → ホストパスのマッピング (server.py と共有 tmp)
 _host_tmp: str   = os.path.join(_SERVER_DIR, "tmp")
 _docker_tmp: str = "/workspace/tmp"
+
+
+def _write_grasp_csv(mesh_path: str, grasps: list):
+    if not _csv_log_path:
+        return
+    fieldnames = ["timestamp", "mesh_path", "sample_idx", "hand"] + [
+        f"j{i}_{ax}" for i in range(23) for ax in ("x", "y", "z")
+    ]
+    ts = datetime.now().isoformat(timespec="seconds")
+    os.makedirs(os.path.dirname(_csv_log_path), exist_ok=True)
+    file_exists = os.path.exists(_csv_log_path)
+    with _csv_lock:
+        with open(_csv_log_path, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            for idx, g in enumerate(grasps):
+                for hand_name, joints in (("left", g["left_hand"]), ("right", g["right_hand"])):
+                    row = {"timestamp": ts, "mesh_path": mesh_path, "sample_idx": idx, "hand": hand_name}
+                    for i, (x, y, z) in enumerate(joints):
+                        row[f"j{i}_x"] = x
+                        row[f"j{i}_y"] = y
+                        row[f"j{i}_z"] = z
+                    writer.writerow(row)
 
 
 def _rel(path: str) -> str:
@@ -239,6 +267,9 @@ async def generate_grasp(
         for lh, rh in results
     ]
     print(f"[GraspServer] 完了: {len(grasps)} grasps")
+    _write_grasp_csv(load_path, grasps)
+    if _csv_log_path:
+        print(f"[GraspServer] CSV 追記: {_csv_log_path}")
 
     return JSONResponse({
         "grasps":       grasps,
@@ -365,10 +396,13 @@ if __name__ == "__main__":
     parser.add_argument("--sam6d-service", default="http://localhost:8081",
                         help="SAM-6D service URL used by the imported pipeline server.")
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--csv-log", default=os.path.join(_SERVER_DIR, "tmp", "grasps.csv"),
+                        help="把持姿勢を追記するCSVファイルパス (省略時は server/tmp/grasps.csv)")
     args = parser.parse_args()
 
     _grasp_model_dir = args.grasp_model_dir
     _grasp_client_dir = args.grasp_client_dir
+    _csv_log_path = args.csv_log
     _host_tmp   = args.host_tmp
     _docker_tmp = args.docker_tmp
 
