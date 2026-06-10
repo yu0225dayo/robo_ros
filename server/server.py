@@ -794,19 +794,19 @@ async def pose_estimate(
         return concat
 
     R_np = np.array(R_list, dtype=np.float32)
-    # Z軸を下向き(R[1,2]>0)に統一 — server_grasp.py の R_corr=diag(1,1,-1) と整合
-    # 上向き(R[1,2]<0)のときだけ反転してDOWNに揃える
-    if R_np[1, 2] < 0:
+    # Z軸を上向き(R[1,2]<0)に統一 — mesh Z = 物体高さ軸 → カメラ-Y(画像上)に揃える
+    # 下向き(R[1,2]>0)のときだけ反転してUPに揃える
+    r12_raw = float(R_np[1, 2])
+    if R_np[1, 2] > 0:
         R_np[:, 2] *= -1
-        print(f"[pose_estimate] Z軸反転 (UP→DOWN): R[1,2]={R_np[1,2]:.3f}")
+        print(f"[pose_estimate] Z軸反転 (DOWN→UP): R[1,2]={r12_raw:.3f} → {R_np[1,2]:.3f}")
     else:
-        print(f"[pose_estimate] Z軸反転なし (すでにDOWN): R[1,2]={R_np[1,2]:.3f}")
+        print(f"[pose_estimate] Z軸反転なし (すでにUP): R[1,2]={r12_raw:.3f}")
     R_list = R_np.tolist()
 
-    # 可視化用: R_npは常にZ下向き(R[1,2]>0) → 反転して↑向きで表示
+    # 可視化用: R_npは常にZ上向き(R[1,2]<0) → そのまま表示 (↑向きなので反転不要)
     R_vis = R_np.copy()
-    R_vis[:, 2] *= -1
-    print(f"[pose_estimate] 可視化用: Z軸を↑向きに反転 R_vis[1,2]={R_vis[1,2]:.3f}")
+    print(f"[pose_estimate] 可視化用: R_vis[1,2]={R_vis[1,2]:.3f}")
 
     t_mm_np = np.array(best["t"], dtype=np.float32)   # mm単位 (vis_pemと同じ)
     K_np = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
